@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Cleaner</string>
+    <string name="accessibility_service_description">Displays a filtered mirror of your screen and blocks inappropriate content before you see it. Touches pass through to your apps.</string>
+    <string name="capture_notification_title">Cleaner filter active</string>
+    <string name="capture_notification_text">Screen is being filtered in real time</string>
+    <string name="dns_vpn_notification_title">Cleaner DNS filter</string>
+    <string name="dns_vpn_notification_text">Routing DNS through family-safe resolver</string>
+    <string name="enable_accessibility">Enable accessibility service</string>
+    <string name="start_filter">Start filter</string>
+    <string name="stop_filter">Stop filter</string>
+</resources>
