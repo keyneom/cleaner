@@ -15,7 +15,7 @@ enum class AudioMode {
 data class FilterSettings(
     val filterEnabled: Boolean = false,
     val visualNudityEnabled: Boolean = true,
-    val visualSensitivity: Float = 0.6f,
+    val visualSensitivity: Float = 0.25f,
     val textFilterEnabled: Boolean = true,
     val audioFilterEnabled: Boolean = true,
     val audioMode: AudioMode = AudioMode.SYNCED_DELAY,

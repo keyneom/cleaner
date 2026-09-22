@@ -152,11 +152,11 @@ fun CleanerSettingsScreen(vm: SettingsViewModel = viewModel()) {
             }
 
             FilterToggle("Visual nudity filter", settings.visualNudityEnabled, vm::setVisualNudity)
-            Text("Sensitivity ${"%.0f".format(settings.visualSensitivity * 100)}%")
+            Text("Score threshold ${"%.0f".format(settings.visualSensitivity * 100)}%")
             Slider(
-                value = settings.visualSensitivity,
+                value = settings.visualSensitivity.coerceIn(0.2f, 0.8f),
                 onValueChange = vm::setVisualSensitivity,
-                valueRange = 0.3f..0.95f,
+                valueRange = 0.2f..0.8f,
             )
 
             FilterToggle("Text filter", settings.textFilterEnabled, vm::setTextFilter)

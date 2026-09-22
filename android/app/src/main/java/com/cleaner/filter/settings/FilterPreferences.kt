@@ -20,7 +20,7 @@ class FilterPreferences(private val context: Context) {
         FilterSettings(
             filterEnabled = prefs[KEY_FILTER_ENABLED] ?: false,
             visualNudityEnabled = prefs[KEY_VISUAL_NUDITY] ?: true,
-            visualSensitivity = prefs[KEY_VISUAL_SENSITIVITY] ?: 0.6f,
+            visualSensitivity = prefs[KEY_VISUAL_SENSITIVITY] ?: 0.25f,
             textFilterEnabled = prefs[KEY_TEXT_FILTER] ?: true,
             audioFilterEnabled = prefs[KEY_AUDIO_FILTER] ?: true,
             audioMode = AudioMode.entries.getOrElse(prefs[KEY_AUDIO_MODE] ?: 0) { AudioMode.SYNCED_DELAY },
@@ -37,7 +37,7 @@ class FilterPreferences(private val context: Context) {
             val current = FilterSettings(
                 filterEnabled = prefs[KEY_FILTER_ENABLED] ?: false,
                 visualNudityEnabled = prefs[KEY_VISUAL_NUDITY] ?: true,
-                visualSensitivity = prefs[KEY_VISUAL_SENSITIVITY] ?: 0.6f,
+                visualSensitivity = prefs[KEY_VISUAL_SENSITIVITY] ?: 0.25f,
                 textFilterEnabled = prefs[KEY_TEXT_FILTER] ?: true,
                 audioFilterEnabled = prefs[KEY_AUDIO_FILTER] ?: true,
                 audioMode = AudioMode.entries.getOrElse(prefs[KEY_AUDIO_MODE] ?: 0) { AudioMode.SYNCED_DELAY },

@@ -13,17 +13,9 @@ Clicks pass through to the real app; the user only sees filtered pixels.
 
 Not [OpenJev](https://huggingface.co/openjev/openjev). OpenJev is an open-weights *decision* model (Jev-shaped: one forward pass, a probability over labels, including screenshot decisions). The public checkpoint is about 54 GB and is measured around 210 ms on an H100. That cannot hit a phone frame budget.
 
-The on-device equivalent of that *shape* — one forward pass, a score plus boxes, no token decoding — is a tiny detector:
+The on-device model is [NudeNet](https://github.com/notAI-tech/NudeNet) **320n** (YOLOv8n, 320px), bundled from the MIT-licensed `nudenet` 3.4.2 package as `assets/models/320n.onnx` (about 12 MB). Runtime is ONNX Runtime with XNNPACK. It returns boxes for exposed breasts, genitals, buttocks, and anus. Faces, feet, and belly are ignored.
 
-**Primary:** [NudeNet](https://github.com/notAI-tech/NudeNet) detector exported to TFLite (`320n` class), or MobileNetV2 NSFW classifier as fast-path gate.
-
-| Stage | Model | Role |
-|-------|-------|------|
-| Gate | `nsfw_mobilenet_v2_140_224` (TFLite, ~5 MB) | Whole-frame reject in ~5–15 ms; skip detector on obvious safe frames |
-| Localize | NudeNet / YOLO-nano detector (TFLite) | Bounding boxes for region cover |
-
-Runtime: TensorFlow Lite with GPU delegate (`Interpreter.Options.addDelegate(GpuDelegate())`).
-Input downscaled to 224–320 px before inference. Frame skip via 64-bit perceptual hash (aHash).
+NudeNet's own detector keeps a box when its score is at least 0.25, then applies non-maximum suppression at IoU 0.45. That is the app default. The authors do not publish precision, recall, or mAP for this 320n checkpoint. The larger 640m model is the one they describe as more accurate; 320n is the one that fits a phone frame budget (on the order of 15–40 ms per frame on a recent phone GPU/CPU, so multiple updates per second). v0.1.0 did not include these weights and used a skin-tone ratio instead.
 
 ## Never-seen compositor (latest frame, not a queue)
 

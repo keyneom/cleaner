@@ -16,7 +16,7 @@ Because the app is sideloaded (not Play Store), Android will ask you to allow in
 
 ## Features
 
-- **Visual filter** — NudeNet-style on-device detector (not OpenJev). Classifies the newest frame only and keeps the last finished picture up, so a slow model drops frames instead of adding lag.
+- **Visual filter** — NudeNet 320n (YOLOv8n) bundled on device. v0.1.0 used a skin-tone ratio instead. Classifies the newest frame only and keeps the last finished picture up, so a slow model drops frames instead of adding lag. The NudeNet authors do not publish precision or recall for this 320n checkpoint.
 - **Text filter** — accessibility tree + ML Kit OCR + word lists
 - **DNS filter** — Cloudflare Family / NextDNS / CleanBrowsing (Private DNS or local DNS VPN)
 - **Audio filter** — delayed replay with keyword spotting (synced to video presentation clock)

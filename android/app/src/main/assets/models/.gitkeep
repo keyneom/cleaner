@@ -1,2 +1,0 @@
-# Place `nsfw_gate.tflite` here (MobileNetV2 NSFW gate, ~5 MB).
-# See docs/architecture.md for model selection (NudeNet / MobileNet).
