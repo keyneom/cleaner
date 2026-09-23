@@ -10,7 +10,7 @@ import kotlin.math.min
  * letterbox square back onto the original image.
  */
 object NudeNetDecoder {
-    const val MODEL_SIZE = 320
+    const val MODEL_SIZE = MODEL_INPUT_SIZE
     const val NMS_IOU = 0.45f
 
     val labels = listOf(
@@ -34,20 +34,33 @@ object NudeNetDecoder {
         "BUTTOCKS_COVERED",
     )
 
-    /** Body parts the filter covers. Faces and feet are detected but not blocked. */
-    val blockingLabels = setOf(
+    /** Explicit nudity. Always covered. Faces and feet are detected but never blocked. */
+    val exposedLabels = setOf(
         "BUTTOCKS_EXPOSED",
-        "BUTTOCKS_COVERED",
         "FEMALE_BREAST_EXPOSED",
-        "FEMALE_BREAST_COVERED",
         "FEMALE_GENITALIA_EXPOSED",
-        "FEMALE_GENITALIA_COVERED",
         "MALE_GENITALIA_EXPOSED",
         "ANUS_EXPOSED",
+    )
+
+    /**
+     * Partial nudity (bikini, lingerie, bare midriff, shirtless). Optional, because at
+     * low thresholds these classes are what paints junk covers over ordinary photos.
+     */
+    val partialLabels = setOf(
+        "BUTTOCKS_COVERED",
+        "FEMALE_BREAST_COVERED",
+        "FEMALE_GENITALIA_COVERED",
         "ANUS_COVERED",
         "BELLY_EXPOSED",
         "MALE_BREAST_EXPOSED",
     )
+
+    /** Everything the filter can cover. */
+    val blockingLabels = exposedLabels + partialLabels
+
+    fun blockingLabels(includePartial: Boolean): Set<String> =
+        if (includePartial) blockingLabels else exposedLabels
 
     fun peak(
         channelCount: Int,
@@ -74,13 +87,14 @@ object NudeNetDecoder {
         channelCount: Int,
         anchorCount: Int,
         valueAt: (channel: Int, anchor: Int) -> Float,
+        blocking: Set<String> = blockingLabels,
     ): Float {
         if (channelCount < 5 || anchorCount <= 0) return 0f
         val classCount = minOf(channelCount - 4, labels.size)
         var best = 0f
         for (anchor in 0 until anchorCount) {
             for (classId in 0 until classCount) {
-                if (labels[classId] !in blockingLabels) continue
+                if (labels[classId] !in blocking) continue
                 val score = valueAt(4 + classId, anchor)
                 if (score > best) best = score
             }
@@ -95,6 +109,7 @@ object NudeNetDecoder {
         imageWidth: Int,
         imageHeight: Int,
         scoreThreshold: Float,
+        blocking: Set<String> = blockingLabels,
     ): List<DetectionBox> {
         if (channelCount < 5 || anchorCount <= 0 || imageWidth <= 0 || imageHeight <= 0) {
             return emptyList()
@@ -108,7 +123,7 @@ object NudeNetDecoder {
             var bestBlocking = 0f
             var bestBlockingClass = -1
             for (classId in 0 until classCount) {
-                if (classId >= labels.size || labels[classId] !in blockingLabels) continue
+                if (classId >= labels.size || labels[classId] !in blocking) continue
                 val score = valueAt(4 + classId, anchor)
                 if (score > bestBlocking) {
                     bestBlocking = score

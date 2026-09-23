@@ -21,6 +21,7 @@ class FilterPreferences(private val context: Context) {
             filterEnabled = prefs[KEY_FILTER_ENABLED] ?: false,
             visualNudityEnabled = prefs[KEY_VISUAL_NUDITY] ?: true,
             visualSensitivity = effectiveSensitivity(prefs[KEY_VISUAL_SENSITIVITY]),
+            coverPartialNudity = prefs[KEY_COVER_PARTIAL] ?: true,
             textFilterEnabled = prefs[KEY_TEXT_FILTER] ?: true,
             audioFilterEnabled = prefs[KEY_AUDIO_FILTER] ?: true,
             audioMode = AudioMode.entries.getOrElse(prefs[KEY_AUDIO_MODE] ?: 0) { AudioMode.SYNCED_DELAY },
@@ -38,6 +39,7 @@ class FilterPreferences(private val context: Context) {
                 filterEnabled = prefs[KEY_FILTER_ENABLED] ?: false,
                 visualNudityEnabled = prefs[KEY_VISUAL_NUDITY] ?: true,
                 visualSensitivity = effectiveSensitivity(prefs[KEY_VISUAL_SENSITIVITY]),
+                coverPartialNudity = prefs[KEY_COVER_PARTIAL] ?: true,
                 textFilterEnabled = prefs[KEY_TEXT_FILTER] ?: true,
                 audioFilterEnabled = prefs[KEY_AUDIO_FILTER] ?: true,
                 audioMode = AudioMode.entries.getOrElse(prefs[KEY_AUDIO_MODE] ?: 0) { AudioMode.SYNCED_DELAY },
@@ -51,6 +53,7 @@ class FilterPreferences(private val context: Context) {
             prefs[KEY_FILTER_ENABLED] = updated.filterEnabled
             prefs[KEY_VISUAL_NUDITY] = updated.visualNudityEnabled
             prefs[KEY_VISUAL_SENSITIVITY] = updated.visualSensitivity
+            prefs[KEY_COVER_PARTIAL] = updated.coverPartialNudity
             prefs[KEY_TEXT_FILTER] = updated.textFilterEnabled
             prefs[KEY_AUDIO_FILTER] = updated.audioFilterEnabled
             prefs[KEY_AUDIO_MODE] = updated.audioMode.ordinal
@@ -69,7 +72,9 @@ class FilterPreferences(private val context: Context) {
     companion object {
         private val KEY_FILTER_ENABLED = booleanPreferencesKey("filter_enabled")
         private val KEY_VISUAL_NUDITY = booleanPreferencesKey("visual_nudity")
-        private val KEY_VISUAL_SENSITIVITY = floatPreferencesKey("visual_sensitivity")
+        // New key: values stored under "visual_sensitivity" were forced to 0.02 and are ignored.
+        private val KEY_VISUAL_SENSITIVITY = floatPreferencesKey("visual_score_threshold_v2")
+        private val KEY_COVER_PARTIAL = booleanPreferencesKey("cover_partial_nudity")
         private val KEY_TEXT_FILTER = booleanPreferencesKey("text_filter")
         private val KEY_AUDIO_FILTER = booleanPreferencesKey("audio_filter")
         private val KEY_AUDIO_MODE = intPreferencesKey("audio_mode")
@@ -78,15 +83,5 @@ class FilterPreferences(private val context: Context) {
         private val KEY_PRESENTATION_DELAY = longPreferencesKey("presentation_delay_ms")
         private val KEY_TARGET_FPS = intPreferencesKey("target_fps")
         private val KEY_PIN_HASH = stringPreferencesKey("pin_hash")
-    }
-}
-
-/** Old slider floors were too high and missed regions. Remap them down. */
-internal fun effectiveSensitivity(stored: Float?): Float {
-    val value = stored ?: 0.02f
-    return when {
-        value >= 0.20f -> 0.02f
-        value in 0.08f..0.15f -> 0.02f
-        else -> value.coerceIn(0.02f, 0.40f)
     }
 }

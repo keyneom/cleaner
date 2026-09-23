@@ -29,9 +29,36 @@ class NsfwClassifier(context: Context) : AutoCloseable {
     @Volatile private var detector: NudeNetDetector? = null
     @Volatile private var openFailed = false
 
-    fun classify(bitmap: Bitmap, threshold: Float, fullScan: Boolean = true): ClassificationResult {
+    fun classify(
+        bitmap: Bitmap,
+        threshold: Float,
+        includePartial: Boolean = true,
+    ): ClassificationResult {
         val scoreThreshold = threshold.coerceIn(0.02f, 0.95f)
-        detector()?.let { return it.detect(bitmap, scoreThreshold, fullScan) }
+        detector()?.let {
+            return it.detect(bitmap, scoreThreshold, NudeNetDecoder.blockingLabels(includePartial))
+        }
+        return ClassificationResult(isUnsafe = false, score = 0f)
+    }
+
+    /** Runs only [tiles] of an ARGB frame. Boxes come back in frame coordinates. */
+    internal fun classifyTiles(
+        pixels: IntArray,
+        frameWidth: Int,
+        tiles: List<ScanTile>,
+        threshold: Float,
+        includePartial: Boolean,
+    ): ClassificationResult {
+        val scoreThreshold = threshold.coerceIn(0.02f, 0.95f)
+        detector()?.let {
+            return it.detectTiles(
+                pixels,
+                frameWidth,
+                tiles,
+                scoreThreshold,
+                NudeNetDecoder.blockingLabels(includePartial),
+            )
+        }
         return ClassificationResult(isUnsafe = false, score = 0f)
     }
 

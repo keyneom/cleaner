@@ -45,6 +45,8 @@ import com.cleaner.filter.service.CaptureForegroundService
 import com.cleaner.filter.service.FilterAccessibilityService
 import com.cleaner.filter.settings.AudioMode
 import com.cleaner.filter.settings.DnsProvider
+import com.cleaner.filter.settings.MAX_SCORE_THRESHOLD
+import com.cleaner.filter.settings.MIN_SCORE_THRESHOLD
 import com.cleaner.filter.ui.SettingsViewModel
 
 class MainActivity : ComponentActivity() {
@@ -220,11 +222,19 @@ fun CleanerSettingsScreen(vm: SettingsViewModel = viewModel()) {
             }
 
             FilterToggle("Visual nudity filter", settings.visualNudityEnabled, vm::setVisualNudity)
-            Text("Score threshold ${"%.0f".format(settings.visualSensitivity * 100)}%")
+            Text(
+                "Score threshold ${"%.0f".format(settings.visualSensitivity * 100)}% " +
+                    "(lower catches more, but covers more by mistake)",
+            )
             Slider(
-                value = settings.visualSensitivity.coerceIn(0.02f, 0.40f),
+                value = settings.visualSensitivity.coerceIn(MIN_SCORE_THRESHOLD, MAX_SCORE_THRESHOLD),
                 onValueChange = vm::setVisualSensitivity,
-                valueRange = 0.03f..0.40f,
+                valueRange = MIN_SCORE_THRESHOLD..MAX_SCORE_THRESHOLD,
+            )
+            FilterToggle(
+                "Also cover partial nudity (bikini, lingerie, shirtless)",
+                settings.coverPartialNudity,
+                vm::setCoverPartialNudity,
             )
 
             FilterToggle("Text filter", settings.textFilterEnabled, vm::setTextFilter)

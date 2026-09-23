@@ -26,18 +26,68 @@ object FilterEngine {
     private var running = false
     var wantsRunning = false
 
+    enum class ExclusionState {
+        /** No overlay excluded from capture yet (or the hidden API call failed). */
+        UNCLAIMED,
+        /** Exclusion applied; the pipeline is checking captures for the probe marker. */
+        CHECKING,
+        /** Probe marker never showed up in capture: safe to mirror processed frames. */
+        VERIFIED,
+        /** The overlay is being captured: mirroring would freeze the screen. */
+        FAILED,
+    }
+
     @Volatile
-    var mirrorProcessedFrames = false
+    var exclusionState = ExclusionState.UNCLAIMED
         private set
+
+    /** Mirror the safe composite only once capture exclusion is proven on this attach. */
+    val mirrorProcessedFrames: Boolean
+        get() = exclusionState == ExclusionState.VERIFIED
+
+    /**
+     * Without a verified exclusion the best available is boxes over the live screen,
+     * which cannot guarantee never-seen. Not used while the check is still running.
+     */
+    val boxOnlyFallback: Boolean
+        get() = exclusionState == ExclusionState.FAILED || exclusionState == ExclusionState.UNCLAIMED
 
     /** True while Cleaner settings (not the test image) is in front — hide covers so sliders work. */
     @Volatile
     var overlayPausedForOwnUi = false
         private set
 
+    /** The overlay applied the hidden-API exclusion. Verify it before mirroring. */
     fun onCaptureExclusionReady() {
-        mirrorProcessedFrames = true
-        android.util.Log.i("CleanerFilter", "showing processed frames only")
+        exclusionState = ExclusionState.CHECKING
+        android.util.Log.i("CleanerFilter", "capture exclusion applied; verifying")
+        pipeline?.poke()
+    }
+
+    /** The overlay could not apply the exclusion at all. */
+    fun onCaptureExclusionUnavailable() {
+        exclusionState = ExclusionState.UNCLAIMED
+    }
+
+    fun onExclusionChecked(excluded: Boolean) {
+        exclusionState = if (excluded) ExclusionState.VERIFIED else ExclusionState.FAILED
+        if (excluded) {
+            android.util.Log.i("CleanerFilter", "capture exclusion verified; showing processed frames only")
+        } else {
+            android.util.Log.e(
+                "CleanerFilter",
+                "overlay appears in screen capture; mirror disabled, falling back to boxes over the live screen",
+            )
+            overlay?.notifyExclusionFailed()
+        }
+    }
+
+    fun showExclusionMarker(screenRect: android.graphics.RectF) {
+        overlay?.setProbeMarker(screenRect)
+    }
+
+    fun hideExclusionMarker() {
+        overlay?.setProbeMarker(null)
     }
 
     fun setUnfilterable(blocked: Boolean) {
@@ -56,6 +106,7 @@ object FilterEngine {
             overlay?.setContentVisible(false)
         } else if (running) {
             overlay?.setContentVisible(true)
+            pipeline?.poke()
         }
     }
     @Volatile
@@ -136,16 +187,13 @@ object FilterEngine {
                 if (overlayPausedForOwnUi) {
                     frame.bitmap?.recycle()
                 } else {
-                    val mirror = mirrorProcessedFrames
-                    val boxes = frame.classification?.boxes.orEmpty().toMutableList()
+                    val boxes = frame.boxes.toMutableList()
                     probe?.let { boxes.add(com.cleaner.filter.ml.DetectionBox(it, 1f, "probe")) }
-                    val shownBitmap = if (mirror) frame.bitmap else null
-                    if (!mirror) frame.bitmap?.recycle()
                     overlay?.present(
-                        bitmap = shownBitmap,
+                        bitmap = frame.bitmap,
                         boxes = boxes,
                         textHits = emptyList(),
-                        coverAll = frame.coverAll,
+                        coverAll = false,
                     )
                 }
             },
@@ -184,7 +232,7 @@ object FilterEngine {
         if (!settings.visualNudityEnabled) {
             return com.cleaner.filter.ml.ClassificationResult(false, 0f)
         }
-        return active.classify(bitmap, settings.visualSensitivity)
+        return active.classify(bitmap, settings.visualSensitivity, settings.coverPartialNudity)
     }
 
     fun setRunning(value: Boolean) {

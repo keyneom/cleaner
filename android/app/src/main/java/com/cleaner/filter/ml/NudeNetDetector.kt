@@ -2,13 +2,8 @@ package com.cleaner.filter.ml
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.RectF
 import android.util.Log
-import java.util.Arrays
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
@@ -18,6 +13,7 @@ import java.util.EnumSet
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * NudeNet 320n (YOLOv8n, 320px) from the official nudenet 3.4.2 package.
@@ -34,7 +30,7 @@ class NudeNetDetector(context: Context) : AutoCloseable {
     private val tilePool = Executors.newFixedThreadPool(3) { runnable ->
         Thread(runnable, "nudenet-tile").also { it.isDaemon = true }
     }
-    private val tileScratch = Array(3) { TileScratch() }
+    private val tileScratch = Array(3) { FloatArray(3 * NudeNetDecoder.MODEL_SIZE * NudeNetDecoder.MODEL_SIZE) }
 
     init {
         // Prefer XNNPACK; NNAPI often partitions YOLOv8 poorly on Pixel.
@@ -86,72 +82,71 @@ class NudeNetDetector(context: Context) : AutoCloseable {
         return null
     }
 
-    fun detect(bitmap: Bitmap, scoreThreshold: Float, fullScan: Boolean = true): ClassificationResult {
+    /** Whole-bitmap scan (test image, androidTest, window-screenshot fallback). */
+    fun detect(
+        bitmap: Bitmap,
+        scoreThreshold: Float,
+        blocking: Set<String> = NudeNetDecoder.blockingLabels,
+    ): ClassificationResult {
+        val w = bitmap.width
+        val h = bitmap.height
+        val pixels = IntArray(w * h)
+        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        return detectTiles(pixels, w, scanTiles(w, h), scoreThreshold, blocking)
+    }
+
+    /**
+     * Runs the model on each tile of an ARGB frame and returns boxes in frame
+     * coordinates. Tiles are shared across the sessions, one thread per session.
+     * Synchronized because each session owns one input buffer.
+     */
+    @Synchronized
+    internal fun detectTiles(
+        pixels: IntArray,
+        frameWidth: Int,
+        tiles: List<ScanTile>,
+        scoreThreshold: Float,
+        blocking: Set<String>,
+    ): ClassificationResult {
         val start = System.nanoTime()
-        val allTiles = scanTiles(bitmap.width, bitmap.height)
-        if (allTiles.isEmpty()) {
-            return ClassificationResult(false, 0f, inferenceMs = 0)
-        }
-        // Full scan = every tile (first hit / scroll). Sticky refresh = center only (faster).
-        val tiles = if (fullScan || allTiles.size == 1) {
-            allTiles
-        } else {
-            listOf(allTiles[allTiles.size / 2])
-        }
+        if (tiles.isEmpty()) return ClassificationResult(false, 0f, inferenceMs = 0)
         val parts = arrayOfNulls<ClassificationResult>(tiles.size)
-        val parallel = tiles.size > 1 && tileSessions.size >= allTiles.size
-        if (parallel) {
-            val latch = CountDownLatch(tiles.size)
-            for (index in tiles.indices) {
-                val sessionIndex = if (fullScan) index else allTiles.size / 2
+        val workers = minOf(tileSessions.size, tiles.size)
+        val next = AtomicInteger(0)
+        val runWorker = { worker: Int ->
+            while (true) {
+                val index = next.getAndIncrement()
+                if (index >= tiles.size) break
+                try {
+                    fillTileInput(pixels, frameWidth, tiles[index], tileScratch[worker])
+                    parts[index] = infer(
+                        tileSessions[worker],
+                        tileInputs[worker],
+                        tileScratch[worker],
+                        tiles[index].size,
+                        scoreThreshold,
+                        blocking,
+                    )
+                } catch (error: Throwable) {
+                    Log.w(TAG, "tile $index failed: ${error.message}")
+                }
+            }
+        }
+        if (workers <= 1) {
+            runWorker(0)
+        } else {
+            val latch = CountDownLatch(workers)
+            for (worker in 0 until workers) {
                 tilePool.execute {
-                    val scratch = TileScratch()
                     try {
-                        val tile = tiles[index]
-                        parts[index] = infer(
-                            tileSessions[sessionIndex.coerceAtMost(tileSessions.lastIndex)],
-                            tileInputs[sessionIndex.coerceAtMost(tileInputs.lastIndex)],
-                            bitmap,
-                            Rect(tile.left, tile.top, tile.left + tile.size, tile.top + tile.size),
-                            scoreThreshold,
-                            usingNnapi,
-                            scratch,
-                        )
-                    } catch (error: Throwable) {
-                        Log.w(TAG, "tile $index failed: ${error.message}")
+                        runWorker(worker)
                     } finally {
-                        scratch.scaled?.recycle()
                         latch.countDown()
                     }
                 }
             }
-            if (!latch.await(2, TimeUnit.SECONDS)) {
+            if (!latch.await(10, TimeUnit.SECONDS)) {
                 Log.w(TAG, "tile infer timed out remaining=${latch.count}")
-            }
-        } else {
-            for (index in tiles.indices) {
-                val sessionIndex = if (fullScan) {
-                    index.coerceAtMost(tileSessions.lastIndex)
-                } else {
-                    (allTiles.size / 2).coerceAtMost(tileSessions.lastIndex)
-                }
-                val scratch = TileScratch()
-                try {
-                    val tile = tiles[index]
-                    parts[index] = infer(
-                        tileSessions[sessionIndex],
-                        tileInputs[sessionIndex],
-                        bitmap,
-                        Rect(tile.left, tile.top, tile.left + tile.size, tile.top + tile.size),
-                        scoreThreshold,
-                        usingNnapi,
-                        scratch,
-                    )
-                } catch (error: Throwable) {
-                    Log.w(TAG, "tile $index failed: ${error.message}")
-                } finally {
-                    scratch.scaled?.recycle()
-                }
             }
         }
         val found = ArrayList<DetectionBox>()
@@ -179,8 +174,8 @@ class NudeNetDetector(context: Context) : AutoCloseable {
         val ms = (System.nanoTime() - start) / 1_000_000
         Log.i(
             TAG,
-            "tiles=${tiles.size}/${allTiles.size} boxes=${kept.size} ${ms}ms " +
-                "top=${"%.3f".format(topScore)} full=$fullScan nnapi=$usingNnapi",
+            "tiles=${tiles.size} boxes=${kept.size} ${ms}ms " +
+                "top=${"%.3f".format(topScore)} nnapi=$usingNnapi",
         )
         return ClassificationResult(
             isUnsafe = kept.isNotEmpty(),
@@ -194,14 +189,12 @@ class NudeNetDetector(context: Context) : AutoCloseable {
     private fun infer(
         active: OrtSession,
         activeInput: String,
-        bitmap: Bitmap,
-        region: Rect,
+        input: FloatArray,
+        tileSize: Int,
         scoreThreshold: Float,
-        nnapiFlag: Boolean,
-        scratch: TileScratch,
+        blocking: Set<String>,
     ): ClassificationResult {
         val start = System.nanoTime()
-        val input = letterbox(bitmap, region, scratch)
         val shape = longArrayOf(1, 3, NudeNetDecoder.MODEL_SIZE.toLong(), NudeNetDecoder.MODEL_SIZE.toLong())
         OnnxTensor.createTensor(env, FloatBuffer.wrap(input), shape).use { tensor ->
             active.run(mapOf(activeInput to tensor)).use { outputs ->
@@ -222,22 +215,23 @@ class NudeNetDetector(context: Context) : AutoCloseable {
                     buffer.get(index)
                 }
                 val (topLabel, topScore) = NudeNetDecoder.peak(channelCount, anchorCount, valueAt)
-                val blocking = NudeNetDecoder.blockingPeak(channelCount, anchorCount, valueAt)
+                val blockingScore = NudeNetDecoder.blockingPeak(channelCount, anchorCount, valueAt, blocking)
                 val boxes = NudeNetDecoder.decode(
                     channelCount = channelCount,
                     anchorCount = anchorCount,
                     valueAt = valueAt,
-                    imageWidth = region.width(),
-                    imageHeight = region.height(),
+                    imageWidth = tileSize,
+                    imageHeight = tileSize,
                     scoreThreshold = scoreThreshold,
+                    blocking = blocking,
                 )
                 val best = boxes.maxOfOrNull { it.score } ?: 0f
                 val ms = (System.nanoTime() - start) / 1_000_000
-                if (boxes.isNotEmpty() || blocking >= scoreThreshold) {
+                if (boxes.isNotEmpty() || blockingScore >= scoreThreshold) {
                     Log.i(
                         TAG,
-                        "top=$topLabel ${"%.3f".format(topScore)} block=${"%.3f".format(blocking)} " +
-                            "boxes=${boxes.size} ${ms}ms nnapi=$nnapiFlag",
+                        "top=$topLabel ${"%.3f".format(topScore)} block=${"%.3f".format(blockingScore)} " +
+                            "boxes=${boxes.size} ${ms}ms nnapi=$usingNnapi",
                     )
                 }
                 return ClassificationResult(
@@ -253,68 +247,11 @@ class NudeNetDetector(context: Context) : AutoCloseable {
 
     override fun close() {
         tilePool.shutdownNow()
-        tileScratch.forEach { it.scaled?.recycle() }
         tileSessions.forEach { runCatching { it.close() } }
-    }
-
-    private fun letterbox(bitmap: Bitmap, region: Rect, scratch: TileScratch): FloatArray {
-        val size = NudeNetDecoder.MODEL_SIZE
-        val input = scratch.input
-        val pixels = scratch.pixels
-        val scaled = scratch.scaled?.takeIf { it.width == size && it.height == size }
-            ?: Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { scratch.scaled = it }
-
-        if (region.width() == size && region.height() == size) {
-            bitmap.getPixels(pixels, 0, size, region.left, region.top, size, size)
-        } else {
-            scratch.src.set(region)
-            // Square tiles just scale into the model input.
-            scratch.dst.set(0, 0, size, size)
-            val canvas = Canvas(scaled)
-            canvas.drawColor(Color.BLACK)
-            canvas.drawBitmap(bitmap, scratch.src, scratch.dst, scratch.paint)
-            scaled.getPixels(pixels, 0, size, 0, 0, size, size)
-        }
-        val area = size * size
-        for (i in 0 until area) {
-            val p = pixels[i]
-            input[i] = ((p shr 16) and 0xff) / 255f
-            input[area + i] = ((p shr 8) and 0xff) / 255f
-            input[area * 2 + i] = (p and 0xff) / 255f
-        }
-        return input
     }
 
     companion object {
         private const val TAG = "CleanerFilter"
         const val MODEL_ASSET = "models/320n.onnx"
-    }
-}
-
-internal data class ScanTile(val left: Int, val top: Int, val size: Int)
-
-private class TileScratch {
-    val input = FloatArray(3 * NudeNetDecoder.MODEL_SIZE * NudeNetDecoder.MODEL_SIZE)
-    val pixels = IntArray(NudeNetDecoder.MODEL_SIZE * NudeNetDecoder.MODEL_SIZE)
-    var scaled: Bitmap? = null
-    val src = Rect()
-    val dst = Rect()
-    val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-}
-
-/** Square windows along a tall or wide frame so 320n sees body-sized detail. */
-internal fun scanTiles(width: Int, height: Int): List<ScanTile> {
-    if (width <= 0 || height <= 0) return emptyList()
-    val shortSide = minOf(width, height)
-    val longSide = maxOf(width, height)
-    val origins = if (longSide * 2 < shortSide * 3) {
-        listOf(0)
-    } else {
-        listOf(0, (longSide - shortSide) / 2, longSide - shortSide).distinct()
-    }
-    return if (height >= width) {
-        origins.map { ScanTile(0, it, shortSide) }
-    } else {
-        origins.map { ScanTile(it, 0, shortSide) }
     }
 }

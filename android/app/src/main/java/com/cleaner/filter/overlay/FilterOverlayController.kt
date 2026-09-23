@@ -16,6 +16,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
+import com.cleaner.filter.capture.ExclusionProbe
 import com.cleaner.filter.ml.DetectionBox
 import com.cleaner.filter.service.FilterAccessibilityService
 import com.cleaner.filter.text.TextHit
@@ -52,10 +53,23 @@ class FilterOverlayView(context: Context) : android.view.View(context) {
         postInvalidate()
     }
 
+    /** Capture-exclusion probe marker in view pixels, drawn above everything else. */
+    private var probeMarker: RectF? = null
+    private val probePaint = Paint().apply { style = Paint.Style.FILL }
+
+    fun setProbeMarker(rect: RectF?) {
+        probeMarker = rect
+        postInvalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-        val current = frame ?: return
+        frame?.let { drawFrame(canvas, it) }
+        probeMarker?.let { drawProbe(canvas, it) }
+    }
+
+    private fun drawFrame(canvas: Canvas, current: OverlayFrame) {
         if (current.blockUnfilterable) {
             canvas.drawColor(Color.BLACK)
             canvas.drawText("Incognito can't be filtered.", 48f, height * 0.45f, noticeText)
@@ -80,6 +94,24 @@ class FilterOverlayView(context: Context) : android.view.View(context) {
         }
         for (region in current.blurRegions) {
             canvas.drawRect(region, blurPaint)
+        }
+    }
+
+    private fun drawProbe(canvas: Canvas, rect: RectF) {
+        val grid = ExclusionProbe.GRID
+        val bw = rect.width() / grid
+        val bh = rect.height() / grid
+        for (by in 0 until grid) {
+            for (bx in 0 until grid) {
+                probePaint.color = ExclusionProbe.blockColor(bx, by)
+                canvas.drawRect(
+                    rect.left + bx * bw,
+                    rect.top + by * bh,
+                    rect.left + (bx + 1) * bw,
+                    rect.top + (by + 1) * bh,
+                    probePaint,
+                )
+            }
         }
     }
 }
@@ -233,6 +265,7 @@ class FilterOverlayController(private var context: Context) {
                     view.updateFrame(OverlayFrame(bitmap = null, waitingCover = true))
                     Log.i(TAG, "WM overlay excluded from capture")
                 } else {
+                    com.cleaner.filter.FilterEngine.onCaptureExclusionUnavailable()
                     Log.w(TAG, "WM overlay visible but NOT excluded — leaving mirror off")
                 }
             }
@@ -284,6 +317,8 @@ class FilterOverlayController(private var context: Context) {
     private fun teardownLocked() {
         if (!shown && overlayView == null) return
         Log.i(TAG, "overlay teardown wm=$usingWindowManager")
+        // A new attach must prove exclusion again before frames are mirrored into it.
+        com.cleaner.filter.FilterEngine.onCaptureExclusionUnavailable()
         attachedOverlay?.release()
         attachedOverlay = null
         if (usingWindowManager) {
@@ -356,6 +391,26 @@ class FilterOverlayController(private var context: Context) {
     }
 
     fun isShowing(): Boolean = shown
+
+    /** Draws (or clears, with null) the capture-exclusion probe marker in screen pixels. */
+    fun setProbeMarker(screenRect: RectF?) {
+        mainHandler.post {
+            synchronized(lock) {
+                overlayView?.setProbeMarker(screenRect)
+            }
+        }
+    }
+
+    fun notifyExclusionFailed() {
+        mainHandler.post {
+            android.widget.Toast.makeText(
+                context,
+                "Cleaner can't hide its overlay from screen capture on this device. " +
+                    "Covers are drawn over the live screen, so content may show briefly before it is covered.",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
 
     companion object {
         private const val TAG = "CleanerFilter"

@@ -305,3 +305,49 @@ Priority is product objectives, not more architecture churn:
 - Goal marked complete to prevent auto-restart; todos cancelled.
 - Objectives above remain the north star; implementation is partial and
   regression-prone around overlay visibility and never-seen presentation.
+
+---
+
+## Follow-up session (code review, no device)
+
+A code review found that the never-seen and hit-rate failures were structural:
+
+- After a few clean classifications the pipeline showed live, unclassified frames.
+  New content scrolling into a clean page was visible until the model caught up.
+- The capture was 320 px wide, so a feed image reached NudeNet at about 100 px.
+  The mirror was the same frame stretched to 1080 px, so the screen was blurry.
+- `effectiveSensitivity` forced the threshold to 0.02 whatever the slider said.
+- Nothing verified that the overlay was really excluded from capture.
+
+Changes (see [architecture.md](architecture.md#never-seen-compositor-reference-frame--scroll-tracking)):
+
+1. **Reference-frame compositor** (`capture/SafeFrame.kt`, `ScreenCapturePipeline.kt`)
+   replaces wide/tight/sticky/freeze. Only pixels matching classified content are shown.
+   Scroll is tracked, and covers move with content.
+2. **Incremental classification**: the model runs only on 320 px tiles over changed cells,
+   plus a full re-scan every 2 s.
+3. **Resolution**: 576 px capture, native-resolution 320 tiles with a 64 px overlap (`ml/Tiles.kt`).
+4. **Threshold**: new preference key (old forced values are ignored), default 0.15,
+   range 0.05–0.50. Partial nudity labels (covered parts, belly, male chest) sit behind
+   a setting that defaults on.
+5. **Exclusion self-check** (`capture/ExclusionProbe.kt`): the mirror turns on only after the
+   probe marker is confirmed absent from capture. Otherwise it falls back to boxes, with a toast.
+6. `FrameHasher` was removed (no longer used).
+
+Verified: 31 JVM unit tests (never-seen on scroll, in-place changes, cover tracking,
+sub-pixel scroll, strict promotion, tiles, probe) in a scratch Gradle build, plus a
+type-check of the pipeline, detector, overlay, engine and a11y service against the
+Android 15 API. **Not** verified: a real AGP build (the cloud session could not reach
+Google Maven), Compose/DataStore files, and anything on a device.
+
+### Device checklist for this build
+
+1. Logcat `CleanerFilter`: `capture exclusion check excluded=true`. If `false`, the mirror
+   is off, and exclusion is broken on this OS build.
+2. `presentFps` near 30 while scrolling. `untrustedCells` should spike, then drop as
+   references arrive.
+3. TestImageActivity: the cover appears, then **stays attached to the image while scrolling**.
+   New content at the bottom edge is black briefly, never shown live.
+4. `inferMs` per reference: full scans run about 10 tiles, and scroll updates 2–4. If full scans are
+   too slow, time NudeNet on the GPU (LiteRT delegate) before changing models.
+5. Calibrate `DEFAULT_SCORE_THRESHOLD` against the local trigger images (hits vs. junk covers).

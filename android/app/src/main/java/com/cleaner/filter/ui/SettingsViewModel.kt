@@ -26,6 +26,7 @@ class SettingsViewModel : ViewModel() {
     fun setVisualNudity(enabled: Boolean) = update { it.copy(visualNudityEnabled = enabled) }
 
     fun setVisualSensitivity(value: Float) = update { it.copy(visualSensitivity = value) }
+    fun setCoverPartialNudity(value: Boolean) = update { it.copy(coverPartialNudity = value) }
 
     fun setTextFilter(enabled: Boolean) = update { it.copy(textFilterEnabled = enabled) }
 

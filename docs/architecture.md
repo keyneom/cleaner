@@ -17,19 +17,30 @@ The on-device model is [NudeNet](https://github.com/notAI-tech/NudeNet) **320n**
 
 NudeNet's own detector keeps a box when its score is at least 0.25, then applies non-maximum suppression at IoU 0.45. That is the app default. The authors do not publish precision, recall, or mAP for this 320n checkpoint. The larger 640m model is the one they describe as more accurate; 320n is the one that fits a phone frame budget (on the order of 15–40 ms per frame on a recent phone GPU/CPU, so multiple updates per second). v0.1.0 did not include these weights and used a skin-tone ratio instead.
 
-## Never-seen compositor (latest frame, not a queue)
+## Never-seen compositor (reference frame + scroll tracking)
 
 ```
 Real app (input native)
-    ↓ MediaProjection acquireLatestImage
-LatestFrameInbox (at most one waiting frame; older waiting frames are dropped)
-    ↓ one classifier thread
-Overlay keeps the last finished composite until the new one is ready
+    ↓ MediaProjection, 576 px short side, newest image only (≤ 30 fps)
+Capture thread: compare frame to the last classified frame ("reference")
+    ↓ estimate vertical scroll, then check each 16 px cell
+Overlay shows only cells that match classified pixels; covers move with them
+    ↘ LatestFrameInbox (one waiting frame)
+      Classifier thread: run NudeNet only on 320 px tiles over changed cells,
+      then promote that frame to be the new reference
 ```
 
-A slow model lowers the update rate. It does not stack delay, because frames that arrive while classification is in progress replace the single waiting slot instead of lining up. Unclassified pixels are never published. If a frame is unsafe and has no boxes, the previous composite stays up.
+The rule: a pixel reaches the screen only if it matches a pixel the classifier has already seen (`capture/SafeFrame.kt`).
 
-`takeScreenshotOfWindow` is fallback only (~3 fps, API 34+).
+- **STILL** cells are unchanged since the reference, so they are shown live.
+- **SHIFTED** cells are reference content moved by the scroll. They are shown live, and covers move with them.
+- **UNTRUSTED** cells are new or changed. If the frame did not scroll, the reference's pixels are shown there (video plays at classify rate). If it scrolled, they are black until classified.
+
+Scrolling therefore stays at capture rate, and only the newly exposed strip waits on the model. The check allows for sub-pixel resampling: each sample must fall within the range of the reference at the source row and its neighbours. Promotion to a new reference uses a stricter tolerance, so slow in-place changes cannot chain past the model. Every tile is also re-scanned every 2 s.
+
+Covers stick to unchanged content. A cover whose content changed in place is held for 6 s after its last detection, so intermittent misses on video do not flicker. On a full scan, a cover the model has not confirmed for 6 s is dropped.
+
+The overlay is excluded from capture through a hidden API. Each attach is verified before mirroring: the overlay draws a magenta/green checker marker, and if the marker shows up in captured frames, the mirror stays off and the app falls back to boxes over the live screen (and tells the user). See `capture/ExclusionProbe.kt`.
 
 `takeScreenshotOfWindow` is fallback only (~3 fps, API 34+).
 
