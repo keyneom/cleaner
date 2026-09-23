@@ -146,11 +146,8 @@ class FilteredAudioPipeline(
         }
     }
 
-    private fun duckMediaVolume(duck: Boolean) {
-        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        if (duck) {
-            am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
-        }
+    private fun duckMediaVolume(@Suppress("UNUSED_PARAMETER") duck: Boolean) {
+        // Never change the user's media volume. Setting it to 0 made the phone feel broken.
     }
 
     fun stop() {

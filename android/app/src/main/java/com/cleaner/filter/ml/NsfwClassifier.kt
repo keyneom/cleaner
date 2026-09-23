@@ -15,67 +15,45 @@ data class ClassificationResult(
     val score: Float,
     val boxes: List<DetectionBox> = emptyList(),
     val inferenceMs: Long = 0,
+    val topScore: Float = 0f,
 )
 
 /**
- * On-device nudity detector. Uses bundled NudeNet 320n when the ONNX file loads.
- * Falls back to a skin-tone ratio only if the model cannot be opened.
+ * On-device nudity detector. Covers only the boxes NudeNet 320n returns.
+ * If the model cannot be opened, nothing is covered. A full-frame cover would
+ * hide the controls needed to leave the image.
  */
 class NsfwClassifier(context: Context) : AutoCloseable {
-    private val detector: NudeNetDetector? = try {
-        NudeNetDetector(context.applicationContext)
-    } catch (_: Throwable) {
-        null
-    }
+    private val appContext = context.applicationContext
+    private val lock = Any()
+    @Volatile private var detector: NudeNetDetector? = null
+    @Volatile private var openFailed = false
 
-    fun classify(bitmap: Bitmap, threshold: Float): ClassificationResult {
-        val scoreThreshold = threshold.coerceIn(0.05f, 0.95f)
-        detector?.let { return it.detect(bitmap, scoreThreshold) }
-        return heuristic(bitmap)
+    fun classify(bitmap: Bitmap, threshold: Float, fullScan: Boolean = true): ClassificationResult {
+        val scoreThreshold = threshold.coerceIn(0.02f, 0.95f)
+        detector()?.let { return it.detect(bitmap, scoreThreshold, fullScan) }
+        return ClassificationResult(isUnsafe = false, score = 0f)
     }
 
     override fun close() {
-        detector?.close()
-    }
-
-    private fun heuristic(bitmap: Bitmap): ClassificationResult {
-        val start = System.nanoTime()
-        val score = skinRatio(bitmap)
-        val ms = (System.nanoTime() - start) / 1_000_000
-        val unsafe = score >= 0.85f
-        val boxes = if (unsafe) {
-            listOf(
-                DetectionBox(
-                    RectF(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat()),
-                    score,
-                    "heuristic",
-                ),
-            )
-        } else {
-            emptyList()
+        synchronized(lock) {
+            detector?.close()
+            detector = null
         }
-        return ClassificationResult(unsafe, score, boxes, ms)
     }
 
-    private fun skinRatio(bitmap: Bitmap): Float {
-        val step = 8
-        var skin = 0
-        var total = 0
-        var y = 0
-        while (y < bitmap.height) {
-            var x = 0
-            while (x < bitmap.width) {
-                val p = bitmap.getPixel(x, y)
-                val r = p shr 16 and 0xFF
-                val g = p shr 8 and 0xFF
-                val b = p and 0xFF
-                if (r > 60 && g > 40 && b > 20 && r - g >= 15 && r > g && g > b) skin++
-                total++
-                x += step
+    private fun detector(): NudeNetDetector? {
+        detector?.let { return it }
+        synchronized(lock) {
+            detector?.let { return it }
+            if (openFailed) return null
+            return try {
+                NudeNetDetector(appContext).also { detector = it }
+            } catch (error: Throwable) {
+                openFailed = true
+                android.util.Log.e("CleanerFilter", "nudenet unavailable; not covering the screen", error)
+                null
             }
-            y += step
         }
-        if (total == 0) return 0f
-        return (skin.toFloat() / total * 2.5f).coerceIn(0f, 1f)
     }
 }

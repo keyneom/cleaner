@@ -20,7 +20,7 @@ class FilterPreferences(private val context: Context) {
         FilterSettings(
             filterEnabled = prefs[KEY_FILTER_ENABLED] ?: false,
             visualNudityEnabled = prefs[KEY_VISUAL_NUDITY] ?: true,
-            visualSensitivity = prefs[KEY_VISUAL_SENSITIVITY] ?: 0.25f,
+            visualSensitivity = effectiveSensitivity(prefs[KEY_VISUAL_SENSITIVITY]),
             textFilterEnabled = prefs[KEY_TEXT_FILTER] ?: true,
             audioFilterEnabled = prefs[KEY_AUDIO_FILTER] ?: true,
             audioMode = AudioMode.entries.getOrElse(prefs[KEY_AUDIO_MODE] ?: 0) { AudioMode.SYNCED_DELAY },
@@ -37,7 +37,7 @@ class FilterPreferences(private val context: Context) {
             val current = FilterSettings(
                 filterEnabled = prefs[KEY_FILTER_ENABLED] ?: false,
                 visualNudityEnabled = prefs[KEY_VISUAL_NUDITY] ?: true,
-                visualSensitivity = prefs[KEY_VISUAL_SENSITIVITY] ?: 0.25f,
+                visualSensitivity = effectiveSensitivity(prefs[KEY_VISUAL_SENSITIVITY]),
                 textFilterEnabled = prefs[KEY_TEXT_FILTER] ?: true,
                 audioFilterEnabled = prefs[KEY_AUDIO_FILTER] ?: true,
                 audioMode = AudioMode.entries.getOrElse(prefs[KEY_AUDIO_MODE] ?: 0) { AudioMode.SYNCED_DELAY },
@@ -78,5 +78,15 @@ class FilterPreferences(private val context: Context) {
         private val KEY_PRESENTATION_DELAY = longPreferencesKey("presentation_delay_ms")
         private val KEY_TARGET_FPS = intPreferencesKey("target_fps")
         private val KEY_PIN_HASH = stringPreferencesKey("pin_hash")
+    }
+}
+
+/** Old slider floors were too high and missed regions. Remap them down. */
+internal fun effectiveSensitivity(stored: Float?): Float {
+    val value = stored ?: 0.02f
+    return when {
+        value >= 0.20f -> 0.02f
+        value in 0.08f..0.15f -> 0.02f
+        else -> value.coerceIn(0.02f, 0.40f)
     }
 }

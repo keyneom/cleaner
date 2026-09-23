@@ -1,34 +1,54 @@
 package com.cleaner.filter.capture
 
 import android.graphics.Bitmap
-import android.graphics.Color
-import kotlin.math.abs
 
 object FrameHasher {
     private const val HASH_SIZE = 8
 
-    fun averageHash(bitmap: Bitmap): Long {
-        val scaled = Bitmap.createScaledBitmap(bitmap, HASH_SIZE, HASH_SIZE, true)
-        var sum = 0L
-        val pixels = IntArray(HASH_SIZE * HASH_SIZE)
-        scaled.getPixels(pixels, 0, HASH_SIZE, 0, 0, HASH_SIZE, HASH_SIZE)
-        if (scaled != bitmap) scaled.recycle()
-
-        for (pixel in pixels) {
-            sum += Color.red(pixel) + Color.green(pixel) + Color.blue(pixel)
+    internal fun averageHash(bitmap: Bitmap, ignore: List<CoverRect> = emptyList()): Long {
+        val argb = IntArray(HASH_SIZE * HASH_SIZE)
+        val ignored = BooleanArray(HASH_SIZE * HASH_SIZE)
+        for (gy in 0 until HASH_SIZE) {
+            for (gx in 0 until HASH_SIZE) {
+                val x = ((gx + 0.5f) * bitmap.width / HASH_SIZE).toInt()
+                    .coerceIn(0, bitmap.width - 1)
+                val y = ((gy + 0.5f) * bitmap.height / HASH_SIZE).toInt()
+                    .coerceIn(0, bitmap.height - 1)
+                val index = gy * HASH_SIZE + gx
+                if (ignore.any { contains(it, x.toFloat(), y.toFloat()) }) {
+                    ignored[index] = true
+                    continue
+                }
+                argb[index] = bitmap.getPixel(x, y)
+            }
         }
-        val avg = sum / (HASH_SIZE * HASH_SIZE * 3)
+        return hashSamples(argb, ignored)
+    }
 
+    internal fun hashSamples(argb: IntArray, ignored: BooleanArray): Long {
+        var sum = 0L
+        var count = 0
+        for (i in argb.indices) {
+            if (ignored[i]) continue
+            val pixel = argb[i]
+            sum += ((pixel shr 16) and 0xFF) + ((pixel shr 8) and 0xFF) + (pixel and 0xFF)
+            count++
+        }
+        val avg = if (count == 0) 0L else sum / (count * 3)
         var hash = 0L
-        for (i in pixels.indices) {
-            val pixel = pixels[i]
-            val luminance = (Color.red(pixel) + Color.green(pixel) + Color.blue(pixel)) / 3
+        for (i in argb.indices) {
+            if (ignored[i]) continue
+            val pixel = argb[i]
+            val luminance = (((pixel shr 16) and 0xFF) + ((pixel shr 8) and 0xFF) + (pixel and 0xFF)) / 3
             if (luminance >= avg) {
                 hash = hash or (1L shl i)
             }
         }
         return hash
     }
+
+    private fun contains(rect: CoverRect, x: Float, y: Float): Boolean =
+        x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
 
     fun hammingDistance(a: Long, b: Long): Int {
         var x = a xor b

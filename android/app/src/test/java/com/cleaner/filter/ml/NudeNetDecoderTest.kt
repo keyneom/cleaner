@@ -51,4 +51,36 @@ class NudeNetDecoderTest {
         assertTrue(boxes.isEmpty())
     }
 
+    @Test
+    fun blockingPeakIgnoresFaces() {
+        val channels = 4 + NudeNetDecoder.labels.size
+        val values = FloatArray(channels)
+        values[4 + NudeNetDecoder.labels.indexOf("FACE_FEMALE")] = 0.9f
+        values[4 + NudeNetDecoder.labels.indexOf("FEMALE_BREAST_EXPOSED")] = 0.4f
+        val peak = NudeNetDecoder.blockingPeak(channels, 1) { channel, _ -> values[channel] }
+        assertEquals(0.4f, peak, 0.001f)
+    }
+
+    @Test
+    fun keepsBlockingBoxWhenAFaceScoresHigher() {
+        val channels = 4 + NudeNetDecoder.labels.size
+        val values = FloatArray(channels)
+        values[0] = 160f
+        values[1] = 160f
+        values[2] = 40f
+        values[3] = 40f
+        values[4 + NudeNetDecoder.labels.indexOf("FACE_FEMALE")] = 0.9f
+        values[4 + NudeNetDecoder.labels.indexOf("FEMALE_BREAST_EXPOSED")] = 0.4f
+
+        val boxes = NudeNetDecoder.decode(
+            channelCount = channels,
+            anchorCount = 1,
+            valueAt = { channel, _ -> values[channel] },
+            imageWidth = 320,
+            imageHeight = 320,
+            scoreThreshold = 0.25f,
+        )
+        assertEquals(1, boxes.size)
+        assertEquals("FEMALE_BREAST_EXPOSED", boxes[0].label)
+    }
 }

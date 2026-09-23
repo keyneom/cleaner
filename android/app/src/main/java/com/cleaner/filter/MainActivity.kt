@@ -1,10 +1,8 @@
 package com.cleaner.filter
 
 import android.app.Activity
-import android.Manifest
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -44,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.cleaner.filter.dns.DnsVpnController
 import com.cleaner.filter.service.CaptureForegroundService
+import com.cleaner.filter.service.FilterAccessibilityService
 import com.cleaner.filter.settings.AudioMode
 import com.cleaner.filter.settings.DnsProvider
 import com.cleaner.filter.ui.SettingsViewModel
@@ -51,11 +50,74 @@ import com.cleaner.filter.ui.SettingsViewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent?.getBooleanExtra(EXTRA_START_FILTER, false) == true) {
+            window.decorView.post { startFilterWhenReady() }
+        }
+        handleOverlayProbe(intent)
         setContent {
             MaterialTheme {
                 CleanerSettingsScreen()
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOverlayProbe(intent)
+        if (intent.getBooleanExtra(EXTRA_START_FILTER, false)) {
+            startFilterWhenReady()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Settings must stay usable while the filter is running.
+        FilterEngine.setOverlayPausedForOwnUi(true)
+    }
+
+    private fun handleOverlayProbe(intent: Intent?) {
+        if (intent == null) return
+        if (intent.getBooleanExtra(EXTRA_FORCE_COVER, false)) {
+            window.decorView.post {
+                val service = FilterAccessibilityService.instance
+                if (service == null) {
+                    android.util.Log.w("CleanerFilter", "force cover: a11y service null")
+                    return@post
+                }
+                FilterEngine.onAccessibilityServiceConnected(service)
+                FilterEngine.setRunning(true)
+                FilterEngine.overlayController()?.show()
+                FilterEngine.overlayController()?.present(
+                    bitmap = null,
+                    boxes = emptyList(),
+                    textHits = emptyList(),
+                    coverAll = true,
+                )
+                android.util.Log.i("CleanerFilter", "force cover: presented coverAll=true")
+            }
+        }
+        if (intent.getBooleanExtra(EXTRA_COVER_PROBE, false)) {
+            FilterEngine.probe = android.graphics.RectF(80f, 500f, 380f, 800f)
+        }
+        if (intent.getBooleanExtra(EXTRA_CLEAR_PROBE, false)) {
+            FilterEngine.probe = null
+            FilterEngine.setRunning(false)
+            FilterEngine.overlayController()?.hide()
+            android.util.Log.i("CleanerFilter", "force cover cleared")
+        }
+    }
+
+    private fun startFilterWhenReady() {
+        FilterEngine.wantsRunning = true
+        FilterAccessibilityService.instance?.startFilter()
+    }
+
+    companion object {
+        const val EXTRA_START_FILTER = "start_filter"
+        const val EXTRA_COVER_PROBE = "cover_probe"
+        const val EXTRA_CLEAR_PROBE = "clear_probe"
+        const val EXTRA_FORCE_COVER = "force_cover"
     }
 }
 
@@ -80,10 +142,6 @@ fun CleanerSettingsScreen(vm: SettingsViewModel = viewModel()) {
         }
     }
 
-    val audioPermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { }
-
     val vpnPrepare = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
@@ -104,7 +162,7 @@ fun CleanerSettingsScreen(vm: SettingsViewModel = viewModel()) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "On-device live filter. Touches pass through; you see a delayed, filtered mirror.",
+                "One consent starts a live frame stream of the screen. Frames are not saved. Only the newest small frame is classified, and only detected regions are covered. The phone underneath keeps scrolling at full speed.",
                 style = MaterialTheme.typography.bodyMedium,
             )
 
@@ -136,27 +194,37 @@ fun CleanerSettingsScreen(vm: SettingsViewModel = viewModel()) {
 
                     Button(
                         onClick = {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                audioPermission.launch(Manifest.permission.RECORD_AUDIO)
+                            if (FilterAccessibilityService.instance == null) {
+                                context.startActivity(
+                                    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(
+                                        Intent.FLAG_ACTIVITY_NEW_TASK,
+                                    ),
+                                )
+                            } else {
+                                val mgr = context.getSystemService(MediaProjectionManager::class.java)
+                                projectionLauncher.launch(mgr.createScreenCaptureIntent())
                             }
-                            val mgr = context.getSystemService(MediaProjectionManager::class.java)
-                            projectionLauncher.launch(mgr.createScreenCaptureIntent())
                         },
                     ) { Text("Start filter") }
 
                     Button(onClick = {
                         CaptureForegroundService.stop(context)
+                        FilterAccessibilityService.instance?.stopFilter()
                         vm.setFilterEnabled(false)
                     }) { Text("Stop filter") }
+
+                    Button(onClick = {
+                        context.startActivity(Intent(context, TestImageActivity::class.java))
+                    }) { Text("Open test image") }
                 }
             }
 
             FilterToggle("Visual nudity filter", settings.visualNudityEnabled, vm::setVisualNudity)
             Text("Score threshold ${"%.0f".format(settings.visualSensitivity * 100)}%")
             Slider(
-                value = settings.visualSensitivity.coerceIn(0.2f, 0.8f),
+                value = settings.visualSensitivity.coerceIn(0.02f, 0.40f),
                 onValueChange = vm::setVisualSensitivity,
-                valueRange = 0.2f..0.8f,
+                valueRange = 0.03f..0.40f,
             )
 
             FilterToggle("Text filter", settings.textFilterEnabled, vm::setTextFilter)

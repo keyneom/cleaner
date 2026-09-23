@@ -19,12 +19,19 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Cleaner">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".TestImageActivity"
+            android:exported="true"
+            android:label="Cleaner test image"
+            android:theme="@style/Theme.Cleaner" />
 
         <service
             android:name=".service.FilterAccessibilityService"
