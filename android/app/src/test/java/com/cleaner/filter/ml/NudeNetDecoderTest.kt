@@ -57,7 +57,11 @@ class NudeNetDecoderTest {
         val values = FloatArray(channels)
         values[4 + NudeNetDecoder.labels.indexOf("FACE_FEMALE")] = 0.9f
         values[4 + NudeNetDecoder.labels.indexOf("FEMALE_BREAST_EXPOSED")] = 0.4f
-        val peak = NudeNetDecoder.blockingPeak(channels, 1) { channel, _ -> values[channel] }
+        val peak = NudeNetDecoder.blockingPeak(
+            channelCount = channels,
+            anchorCount = 1,
+            valueAt = { channel, _ -> values[channel] },
+        )
         assertEquals(0.4f, peak, 0.001f)
     }
 
